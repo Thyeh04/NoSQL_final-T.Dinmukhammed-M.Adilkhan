@@ -1,61 +1,152 @@
-# Weather App (MongoDB + Node.js)
+require("dotenv").config();
+const express = require("express");
+const mongoose = require("mongoose");
+const axios = require("axios");
+const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const bcrypt = require('bcryptjs');
+const morgan = require("morgan");
 
-## Описание
-Приложение для получения данных о погоде с возможностью сохранения запросов. Поддерживает регистрацию, авторизацию и управление запросами.
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(morgan("dev"));
 
-## Стек технологий
-- **Backend**: Node.js, Express.js
-- **База данных**: MongoDB
-- **Аутентификация**: JWT (JSON Web Token)
-- **Пароли**: bcrypt
-- **Разметка**: EJS (Embedded JavaScript)
+// 🔗 Подключение к MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+    .then(() => console.log("✅ Connected to MongoDB"))
+    .catch(err => console.error("❌ MongoDB connection error:", err));
 
-## Установка и запуск
-### 1. Клонирование репозитория
-```sh
-git clone https://github.com/shyr1es/NoSQL_final-T.Dinmukhammed-M.Adilkhan.git
-cd analytics-platform
-```
+// 🛢️ Схема пользователя
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    role: { type: String, default: "user" },
+});
+const User = mongoose.model("User", userSchema);
 
-### 2. Установка зависимостей
-```sh
-npm install
-```
+// 🛢️ Схема погоды
+const weatherSchema = new mongoose.Schema({
+    timestamp: { type: Date, default: Date.now, index: true },
+    city: { type: String, required: true, index: true },
+    temperature: { type: Number, required: true },
+    humidity: { type: Number, required: true },
+    wind_speed: { type: Number, required: true },
+});
+const Weather = mongoose.model("Weather", weatherSchema);
 
-### 3. Создание `.env` файла
-Создайте файл `.env` в корневой папке и добавьте:
-```env
-MONGO_URI=mongodb://127.0.0.1:27017/analytics
-PORT=5000
-OPENWEATHER_API_KEY=1519a798d51342ce3faa2579955f87fd
-JWT_SECRET=supersecretkey
-```
+// 🔐 Middleware для проверки токена
+function authMiddleware(req, res, next) {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "❌ Unauthorized: No token provided" });
 
-### 4. Запуск сервера
-```sh
-node server.js
-```
+    try {
+        req.user = jwt.verify(token, process.env.JWT_SECRET);
+        next();
+    } catch {
+        res.status(401).json({ error: "❌ Invalid token" });
+    }
+}
 
-## API Маршруты
-### Аутентификация
-- **POST** `/register` – регистрация пользователя (требует `username` и `password`)
-- **POST** `/login` – вход в систему (возвращает JWT токен)
+// 📝 Регистрация пользователя
+app.post("/api/auth/register", async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        const existingUser = await User.findOne({ username });
+        if (existingUser) return res.status(400).json({ error: "⚠️ Username already exists" });
 
-### Работа с запросами
-> *Требуется авторизация (передавать JWT в заголовке `Authorization`)*
-- **GET** `/search` – получить историю запросов
-- **POST** `/search` – сохранить запрос (JSON `{ "city": "Almaty" }`)
-- **DELETE** `/search/:id` – удалить запрос по ID
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const user = new User({ username, password: hashedPassword });
+        await user.save();
+        res.status(201).json({ message: "✅ User registered successfully" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
-## Оптимизация
-- Индексация коллекции `searchqueries` по `city`
-- Индексация `users` по `username` (уникальный индекс)
+// 🔑 Авторизация пользователя
+app.post("/api/auth/login", async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        const user = await User.findOne({ username });
+        if (!user || !(await bcrypt.compare(password, user.password))) {
+            return res.status(401).json({ error: "❌ Invalid credentials" });
+        }
 
-## Возможные улучшения
-- Добавление кеширования запросов
-- Интеграция с React/Vue для UI
-- Улучшение безопасности (refresh tokens, rate limiting)
+        const token = jwt.sign(
+            { userId: user._id, role: user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: "2h" }
+        );
+        res.json({ token });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
----
-**Разработчик:** Maratov Adilkhan , Temirgalin Dinmukhammed 
+// 🌦️ Получение погоды и автоматическое сохранение в MongoDB
+app.get("/api/weather", authMiddleware, async (req, res) => {
+    try {
+        const { city } = req.query;
+        if (!city) return res.status(400).json({ error: "⚠️ City is required" });
 
+        const apiKey = process.env.OPENWEATHER_API_KEY;
+        const encodedCity = encodeURIComponent(city);
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodedCity}&appid=${apiKey}&units=metric&lang=ru`;
+
+        console.log(`🌍 Запрашиваем погоду для: ${city}`);
+
+        const response = await axios.get(url);
+        const { temp, humidity } = response.data.main;
+        const wind_speed = response.data.wind?.speed || 0;
+
+        const weatherData = new Weather({ city, temperature: temp, humidity, wind_speed });
+        await weatherData.save();
+        console.log(`✅ Данные о ${city} сохранены.`);
+
+        res.json({ message: "✅ Данные успешно обновлены", data: weatherData });
+    } catch (error) {
+        console.error("❌ Ошибка:", error.response?.data || error.message);
+        res.status(500).json({ error: error.response?.data?.message || "Ошибка получения данных" });
+    }
+});
+
+// 📊 Получение статистики
+app.get("/api/weather/metrics", authMiddleware, async (req, res) => {
+    try {
+        const { city, field } = req.query;
+        const stats = await Weather.aggregate([
+            { $match: city ? { city } : {} },
+            {
+                $group: {
+                    _id: null,
+                    avg: { $avg: `$${field}` },
+                    min: { $min: `$${field}` },
+                    max: { $max: `$${field}` },
+                    stdDev: { $stdDevPop: `$${field}` },
+                },
+            },
+        ]);
+        res.json(stats.length ? stats[0] : { error: "⚠️ No data found" });
+    } catch (error) {a
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 🕒 История данных
+app.get("/api/weather/history", authMiddleware, async (req, res) => {
+    try {
+        const { city, field } = req.query;
+        const data = await Weather.find({ city }, { timestamp: 1, [field]: 1, _id: 0 }).sort({ timestamp: -1 });
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 🚀 Запуск сервера
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
