@@ -45,7 +45,7 @@ Ensure you have the following installed:
 ## 📡 API Documentation
 ### 🌐 Base URL
 ```
-http://localhost:5000/api
+http://localhost:10000/api
 ```
 
 ### 🔑 Authentication Endpoints
