@@ -1,6 +1,0 @@
-git init
-git add .
-git commit -m "First commit"
-git branch -M main
-git remote add origin https://github.com/shyr1es/NoSQL_final-T.Dinmukhammed-M.Adilkhan
-git push -u origin main
