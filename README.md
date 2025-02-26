@@ -34,13 +34,13 @@ Ensure you have the following installed:
    MONGO_URI=your_mongodb_connection_string
    JWT_SECRET=your_secret_key
    OPENWEATHER_API_KEY=your_api_key
-   PORT=5000
+   PORT=10000
    ```
 4. **Start the server**:
    ```sh
    npm start
    ```
-5. The server will run on `http://localhost:5000`
+5. The server will run on `http://localhost:10000`
 
 ## 📡 API Documentation
 ### 🌐 Base URL
